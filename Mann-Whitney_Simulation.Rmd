@@ -1,0 +1,141 @@
+---
+title: "Rethinking How We Choose Statistical Tests Challenge"
+subtitle: "Why Most Test-Picking Rules Are Wrong—and What to Do About It"
+author: Justin Belair | Statistical Consultant | Author of Causal Inference in Statistics
+output:
+  pdf_document:
+    highlight: "tango"
+    fig_width: 7
+    fig_height: 5
+    fig_caption: true
+    df_print: "kable"
+    latex_engine: "xelatex"
+    toc: true
+    number_sections: true
+    #keep_tex: true
+header-includes:
+  - \usepackage{hyperref}
+  - \hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue, pdfnewwindow=true}
+  - \definecolor{dark_blue}{RGB}{29,42,59}
+  - \usepackage{graphicx}
+  - \usepackage{fancyhdr}
+  - \pagestyle{fancy}
+  - \fancyhf{}
+  - \fancyfoot[L]{JB Statistical Consulting}
+  - \fancyfoot[R]{\thepage}
+  - \setlength{\footskip}{50pt}
+---
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(ggplot2)
+
+set.seed(1)
+```
+
+# Mann-Whitney-Wilcoxon (MWW) Is Not About Medians
+In George W. Divine, H. James Norton, Anna E. Barón & Elizabeth JuarezColunga (2018) The Wilcoxon–Mann–Whitney Procedure Fails as a Test of Medians, The American Statistician, 72:3, 278-286, DOI: 10.1080/00031305.2017.1305291:
+
+> O’Brien and Castelloe (2006) note that “Even worthy statistics books (and knowledgeable statisticians!) state that the WMW
+test compares the two medians, but this is only true in the rarest of cases in which the population distributions of the two groups are merely shifted versions of each other (i.e., differing only in location, and not shape or scale).”
+
+## MWW Hypothesis Test
+Often, we will see the MWW test framed as $$\begin{cases}
+H_0: F = G \text{ (or the distribution of } X_1 = \text{ the distribution of } X_2) \\
+H_1: F = G(x + \Delta) \text{ (or the distribution of } X_1 = \text{ the distribution of } X_2 \text{ shifted by } \Delta \neq 0)
+\end{cases}$$
+
+Framed as such, this means that both distributions are simply shifted versions of each other, they have the same variances, the same skewness, etc. This begs the question: if two distributions are equal, except for their location, wouldn't a t-test be appropriate?
+
+## The MWW Statistic
+The $U$ statistic used for the MWW test is $$U = n_1n_2 + \frac{n_1(n_1+1)}{2} - R_1,$$ where $n_1$ and $n_2$ are the sample sizes of the two groups, and $R_1$ is the sum of the ranks of the observations in group 1.
+
+Asymptotically, we may use the chi-squared distribution to compute the p-value for the MWW test, using $$\chi^2 = \left(\frac{(U - E[U])}{\text{se}(U)}\right)^2,$$ where $E[U]$ and se($U$) are the expected value and standard-error of $U$. respectively.
+
+Let's define an important quantity $$p'' = \mathbb{P}(X1 < X2) + \frac{\mathbb{P}(X1 = X2)}{2},$$ where $X_1$ and $X_2$ represent the variable being tested as measured in group 1 and group 2, respectively.
+
+We thus have the following relationship $$\frac{U}{n_1n_2} = \hat{p}'',$$ where the hat denotes the sample estimate of $p''$. Then, $$\chi^2 = \left(\frac{\hat{p}'' - 0.5}{\text{se}(\hat{p}'')}\right)^2,$$ where se($\hat{p}''$) is the standard-error of $\hat{p}''$.
+
+This shows how the MWW test is really a test of whether $p''$ is equal to 0.5, which is the value of $p''$ under the null hypothesis that the two distributions are the same. Mathematically, a little bit of algebra shows that this is equivalent to $$\mathbb{P}(X1 < X2) = \mathbb{P}(X1 > X2).$$
+
+## Comparison with the t-test
+The t-test uses $$t = \frac{\bar{x}_1 - \bar{x}_2}{\text{se}(\bar{x}_1 - \bar{x}_2)}$$ as its test statistic, where $\bar{X}_1$ and $\bar{X}_2$ are the sample means of the two groups, and se is the standard-error.
+
+## Counterexamples
+Let's look at a few counterexamples, highlighting why MWW is not a test of medians, in general.
+
+### First Counterexample--No difference by WMW test, but very different medians
+
+```{r, echo=FALSE}
+compare_samples <- function(sample1, sample2,
+                            s1_label = "Sample 1",
+                            s2_label = "Sample 2",
+                            binwidth = 1) {
+
+  df <- data.frame(
+    value  = c(sample1, sample2),
+    sample = rep(c(s1_label, s2_label), c(length(sample1), length(sample2)))
+  )
+
+  p <- ggplot(df, aes(x = value, fill = sample, color = sample)) +
+    geom_histogram(aes(y = after_stat(density)),
+                   binwidth = binwidth, alpha = 0.3,
+                   position = "identity") +
+    scale_fill_manual(values  = setNames(c("steelblue", "tomato"), c(s1_label, s2_label))) +
+    scale_color_manual(values = setNames(c("steelblue", "tomato"), c(s1_label, s2_label))) +
+    labs(x = "Value", y = "Density", title = "Overlaid Histograms",
+         fill = NULL, color = NULL) +
+    theme_bw() +
+    theme(legend.position = "top")
+
+  print(p)
+
+  cat("Medians:\n")
+  cat(sprintf("  %s: %g\n", s1_label, median(sample1)))
+  cat(sprintf("  %s: %g\n", s2_label, median(sample2)))
+
+  wt <- wilcox.test(sample1, sample2)
+  cat("\nWilcoxon rank-sum test:\n")
+  print(wt)
+
+  p_hat <- 1 - wt$statistic / (length(sample1) * length(sample2))
+  names(p_hat) <- "hat p''"
+  print(p_hat)
+
+  invisible(list(plot = p, wilcox = wt, p_hat = p_hat))
+}
+```
+
+```{r}
+sample1.1 <- c(1, 1, 2, 2, 2, 3, 3, 9, 105, 105, 106, 106, 106, 107, 107)
+sample2.1 <- c(5, 5, 6, 6, 6, 7, 7, 99, 101, 101, 102, 102, 102, 103, 103)
+```
+
+
+```{r,echo=FALSE}
+compare_samples(sample1.1, sample2.1)
+```
+### Second Counterexample--A significant difference by WMW test, and very different medians (but in the wrong direction!)
+```{r}
+sample1.2 <- c(1, 1, 2, 2, 2, 3, 3, 99, 101, 101, 102, 102, 102, 103, 103)
+sample2.2 <- c(5, 5, 6, 6, 6, 7, 7, 9, 105, 105, 106, 106, 106, 107, 107)
+```
+
+
+```{r,echo=FALSE}
+compare_samples(sample1.2, sample2.2)
+```
+
+\newpage
+## Contact Information and other clickable stuff
+- [**My Personal Website**](https://justinbelair.ca?utm_source=intro_biostats&utm_medium=pdf_mann_whitney_simulation&utm_campaign=contact_info)
+- If you are interested in Consulting, Training, Workshops, Public Speaking, Guest Lectures, and Other Custom Services in statistics and causal inference, please do not hesitate to contact me **consulting@justinbelair.com**
+- The first chapter of my book, *Causal Inference in Statistics*, is available for free on my website by [**clicking here**](https://justinbelair.ca/causal-inference-in-statistics-book/?utm_source=intro_biostats&utm_medium=pdf_mann_whitney_simulation&utm_campaign=contact_info)
+- I share a montly newsletter to stats nerds, causal inference enthusiasts, and data scientists, [**subscribe here**](https://causal-inference-in-statistics.beehiiv.com/subscribe?utm_source=intro_biostats&utm_medium=pdf_mann_whitney_simulation&utm_campaign=contact_info)
+- I founded [**biostatistics.ca**](https://www.biostatistics.ca/?utm_source=intro_biostats&utm_medium=pdf_mann_whitney_simulation&utm_campaign=contact_info), a blog and biostatistics community.
+- I share content daily on [**Linkedin**](https://www.linkedin.com/in/justinbelair/)
+- I created a [**Linkedin Causal Inference Group**](https://www.linkedin.com/groups/13065272/) with [**Aleksander** Molak](https://www.linkedin.com/in/aleksandermolak/)
+- I created a [**Causal Inference Discord Community**](https://discord.com/invite/2xKvHMhYDg) which is free to join
