@@ -1,0 +1,209 @@
+---
+title: "Rethinking How We Choose Statistical Tests — Solution"
+subtitle: "Decision Academy Challenge"
+output:
+  html_document:
+    theme: flatly
+    toc: true
+    toc_float: true
+---
+
+# How the Data Was Generated
+
+The data was simulated with a known structure so we can compare our statistical conclusions to the ground truth:
+
+- **Control group** (n=50): Normal(50, 10)
+- **Treatment group** (n=50): 55% Non-responders from Normal(42, 8) + 45% Responders from Normal(78, 8)
+- **True treatment mean**: 0.55 × 42 + 0.45 × 78 = 58.2 (**true effect = +8.2**)
+- Site effects: Site A (+0), Site B (−3), Site C (+2)
+
+The treatment genuinely works, but not for everyone — some respond strongly, others see little benefit. This is realistic for many interventions. The question is: which statistical approach recovers this true effect?
+
+```{r simulation-reference, eval=FALSE}
+set.seed(394)
+N <- 50
+
+# Control
+ctrl_scores <- rnorm(N, mean = 50, sd = 10)
+
+# Treatment: bimodal mixture
+n_nonresp <- round(N * 0.55)  # 27
+n_resp    <- N - n_nonresp     # 23
+trt_scores <- c(
+  rnorm(n_nonresp, mean = 42, sd = 8),
+  rnorm(n_resp, mean = 78, sd = 8)
+)
+trt_scores <- sample(trt_scores)  # shuffle
+
+cat("True treatment mean:", 0.55 * 42 + 0.45 * 78, "\n")
+cat("True difference:", 0.55 * 42 + 0.45 * 78 - 50, "\n")
+```
+
+# Part 2: Load the Challenge Data
+
+```{r load-data}
+data <- read.csv("challenge_data.csv")
+cat("Shape:", nrow(data), "x", ncol(data), "\n")
+head(data, 10)
+```
+
+```{r descriptives}
+ctrl <- data$cognitive_score[data$group == "control"]
+trt  <- data$cognitive_score[data$group == "treatment"]
+
+cat("=== Descriptive Statistics ===\n")
+cat("Control — mean:", round(mean(ctrl), 2),
+    "sd:", round(sd(ctrl), 2),
+    "median:", round(median(ctrl), 2), "\n")
+cat("Treatment — mean:", round(mean(trt), 2),
+    "sd:", round(sd(trt), 2),
+    "median:", round(median(trt), 2), "\n")
+cat("\nMean difference:", round(mean(trt) - mean(ctrl), 2), "\n")
+```
+
+# Part 3: Visualization
+
+```{r histograms, fig.width=12, fig.height=5}
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1))
+
+hist(ctrl, breaks = 15, col = "#0056d2", border = "white",
+     main = "Control Group", xlab = "Cognitive Score", xlim = c(20, 100))
+abline(v = mean(ctrl), col = "#ab615d", lwd = 2, lty = 2)
+legend("topright", legend = paste("Mean =", round(mean(ctrl), 1)),
+       col = "#ab615d", lwd = 2, lty = 2, bty = "n")
+
+hist(trt, breaks = 15, col = "#6f8a6d", border = "white",
+     main = "Treatment Group", xlab = "Cognitive Score", xlim = c(20, 100))
+abline(v = mean(trt), col = "#ab615d", lwd = 2, lty = 2)
+abline(v = median(trt), col = "#b08a3a", lwd = 2, lty = 3)
+legend("topright",
+       legend = c(paste("Mean =", round(mean(trt), 1)),
+                  paste("Median =", round(median(trt), 1))),
+       col = c("#ab615d", "#b08a3a"), lwd = 2, lty = c(2, 3), bty = "n")
+
+par(mfrow = c(1, 1))
+```
+
+The treatment group is clearly **bimodal** — one cluster of non-responders around 40–45 and one cluster of responders around 75–80.
+
+```{r density, fig.width=10, fig.height=5}
+plot(density(ctrl), col = "#0056d2", lwd = 2, xlim = c(10, 110),
+     main = "Density Comparison: Treatment is Bimodal",
+     xlab = "Cognitive Score")
+lines(density(trt), col = "#6f8a6d", lwd = 2)
+abline(v = mean(ctrl), col = "#0056d2", lty = 2)
+abline(v = mean(trt), col = "#6f8a6d", lty = 2)
+legend("topright", legend = c("Control", "Treatment"),
+       col = c("#0056d2", "#6f8a6d"), lwd = 2, bty = "n")
+```
+
+# Part 4: Normality Tests
+
+```{r shapiro}
+sw_ctrl <- shapiro.test(ctrl)
+sw_trt  <- shapiro.test(trt)
+
+cat("=== Shapiro-Wilk Test ===\n")
+cat(sprintf("Control:   W = %.4f, p = %.4f\n", sw_ctrl$statistic, sw_ctrl$p.value))
+cat(sprintf("Treatment: W = %.4f, p = %.6f\n", sw_trt$statistic, sw_trt$p.value))
+cat("\nBoth groups depart from normality.\n")
+cat("A common approach: 'not normal -> use Mann-Whitney U'\n")
+cat("Let's see what happens when we try all three tests...\n")
+```
+
+# Part 5: The Three Tests
+
+```{r all-tests}
+# Student's t-test (equal variances)
+t_student <- t.test(trt, ctrl, var.equal = TRUE)
+
+# Welch's t-test (unequal variances)
+t_welch <- t.test(trt, ctrl, var.equal = FALSE)
+
+# Mann-Whitney U
+mw <- wilcox.test(trt, ctrl, exact = FALSE)
+
+cat("============================================================\n")
+cat("TEST RESULTS\n")
+cat("============================================================\n")
+cat(sprintf("Student's t-test:  t = %.4f, p = %.4f  %s\n",
+            t_student$statistic, t_student$p.value,
+            ifelse(t_student$p.value < 0.05, "*** SIGNIFICANT", "not significant")))
+cat(sprintf("Welch's t-test:    t = %.4f, p = %.4f  %s\n",
+            t_welch$statistic, t_welch$p.value,
+            ifelse(t_welch$p.value < 0.05, "*** SIGNIFICANT", "not significant")))
+cat(sprintf("Mann-Whitney U:    W = %.1f,  p = %.4f  %s\n",
+            mw$statistic, mw$p.value,
+            ifelse(mw$p.value < 0.05, "*** SIGNIFICANT", "NOT significant")))
+
+cat("\nCOMPARING TO THE TRUE EFFECT (+8.2 points):\n")
+cat("Both t-tests detect a significant effect (p ~ 0.03).\n")
+cat(sprintf("Mann-Whitney says there is NO effect (p = %.2f).\n", mw$p.value))
+cat("\nFollowing 'not normal -> Mann-Whitney' would have missed a real effect.\n")
+```
+
+# Part 6: Why Do the Tests Disagree?
+
+**T-tests** compare population **means**. The Central Limit Theorem ensures the sampling distribution of the mean is approximately normal at n=50, regardless of the data shape.
+
+**Mann-Whitney U** tests **stochastic dominance**: P(X > Y) ≠ 0.5. With bimodal data, 55% of treatment observations sit *below* the control center, weakening the stochastic signal even though the overall mean is higher.
+
+```{r bootstrap, fig.width=10, fig.height=5}
+set.seed(0)
+n_boot <- 10000
+boot_diffs <- replicate(n_boot, {
+  bc <- sample(ctrl, replace = TRUE)
+  bt <- sample(trt, replace = TRUE)
+  mean(bt) - mean(bc)
+})
+
+ci <- quantile(boot_diffs, c(0.025, 0.975))
+
+hist(boot_diffs, breaks = 50, col = "#b08a3a", border = "white",
+     main = "Bootstrap Distribution of Mean Difference",
+     xlab = "Treatment - Control (mean)")
+abline(v = 0, col = "#ab615d", lwd = 2)
+abline(v = mean(boot_diffs), col = "#1f1f1c", lwd = 2, lty = 2)
+
+cat(sprintf("Bootstrap 95%% CI: [%.2f, %.2f]\n", ci[1], ci[2]))
+cat("The CI does not contain 0 — confirming the treatment effect.\n")
+```
+
+# Part 7 (Level 2 (Advanced)): ANCOVA
+
+```{r ancova-baseline}
+model1 <- lm(cognitive_score ~ group + baseline_score, data = data)
+cat("=== ANCOVA: group + baseline_score ===\n")
+summary(model1)
+```
+
+```{r ancova-full}
+model2 <- lm(cognitive_score ~ group + baseline_score + site, data = data)
+cat("=== ANCOVA: group + baseline_score + site ===\n")
+summary(model2)
+
+cat("\nKEY INSIGHT:\n")
+cat("Adding site increases the treatment effect from ~6.3 to ~8.0\n")
+cat("and makes it more significant (p = 0.007 vs 0.033).\n")
+cat("This is very close to the TRUE effect of +8.2.\n")
+cat("Site was a source of unexplained variance masking part of the effect.\n")
+```
+
+# Comparison to the True Effect
+
+| Approach | Estimated effect | p-value | True effect = 8.2 |
+|----------|----------------|---------|------------|
+| Mann-Whitney U | (not a mean difference) | 0.398 | Misses it entirely |
+| Welch's t-test | +6.3 | 0.033 | Detects, underestimates |
+| ANCOVA (+ baseline) | +6.3 | 0.028 | Detects, underestimates |
+| ANCOVA (+ baseline + site) | +8.0 | 0.007 | Closest to truth |
+
+The ANCOVA with site effects recovers +8.0 — remarkably close to the true +8.2 — with the strongest evidence (p = 0.007).
+
+**Key Takeaways:**
+
+1. "Not normal" does not mean "use Mann-Whitney." Match the test to your question.
+2. Mann-Whitney tests stochastic dominance, not means.
+3. T-tests are robust to non-normality at n = 50 (CLT).
+4. Visualize first. The bimodality was obvious in histograms.
+5. Design beats test selection. ANCOVA recovered the true effect almost exactly — far better than any simple test.
